@@ -317,6 +317,22 @@ async def private_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         tg_message_id=message.message_id,
     )
 
+    if text == NO_TEXT_MESSAGE:
+        reply = (
+            "Пожалуйста, задайте вопрос текстом. "
+            "Стикеры, фото, видео и файлы я не передаю координаторам без текстового вопроса."
+        )
+        sent = await message.reply_text(reply)
+        db.log_message(
+            user_id=user.id,
+            direction="bot",
+            text=reply,
+            tg_chat_id=chat.id,
+            tg_message_id=sent.message_id,
+        )
+        logger.info("Ignored non-text private message user=%s db_message_id=%s", user.id, db_message_id)
+        return
+
     match = await choose_faq_match(text, context)
 
     if match is not None:
