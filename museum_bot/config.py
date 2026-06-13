@@ -46,8 +46,14 @@ class Settings:
     database_path: Path
     faq_seed_path: Path
     match_threshold: float
+    local_direct_match_threshold: float
     history_limit: int | None
     auto_close_after_reply: bool
+    gemini_api_key: str | None
+    gemini_enabled: bool
+    gemini_model: str
+    gemini_min_confidence: float
+    gemini_timeout_seconds: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -59,6 +65,7 @@ class Settings:
 
         history_limit_raw = os.getenv("HISTORY_LIMIT", "0").strip()
         history_limit = int(history_limit_raw) if history_limit_raw else 0
+        gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip() or None
 
         return cls(
             bot_token=token,
@@ -66,7 +73,12 @@ class Settings:
             database_path=_path_env("DATABASE_PATH", ROOT_DIR / "bot.sqlite3"),
             faq_seed_path=_path_env("FAQ_SEED_PATH", ROOT_DIR / "data" / "faq_seed.json"),
             match_threshold=float(os.getenv("FAQ_MATCH_THRESHOLD", "0.57")),
+            local_direct_match_threshold=float(os.getenv("LOCAL_DIRECT_MATCH_THRESHOLD", "0.86")),
             history_limit=history_limit if history_limit > 0 else None,
             auto_close_after_reply=_bool_env("AUTO_CLOSE_AFTER_COORDINATOR_REPLY", True),
+            gemini_api_key=gemini_api_key,
+            gemini_enabled=_bool_env("GEMINI_ENABLED", gemini_api_key is not None),
+            gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite").strip(),
+            gemini_min_confidence=float(os.getenv("GEMINI_MIN_CONFIDENCE", "0.70")),
+            gemini_timeout_seconds=float(os.getenv("GEMINI_TIMEOUT_SECONDS", "8")),
         )
-

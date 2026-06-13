@@ -18,10 +18,12 @@ from telegram.ext import (
 
 from .config import Settings
 from .db import Database
+from .gemini import GeminiError, GeminiFAQClassifier
 from .matcher import MatchResult, find_best_match
 
 
 logger = logging.getLogger(__name__)
+NO_TEXT_MESSAGE = "[сообщение без текста]"
 
 
 def app_db(context: ContextTypes.DEFAULT_TYPE) -> Database:
@@ -32,6 +34,10 @@ def app_settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
     return context.application.bot_data["settings"]
 
 
+def app_gemini(context: ContextTypes.DEFAULT_TYPE) -> GeminiFAQClassifier | None:
+    return context.application.bot_data.get("gemini")
+
+
 def message_text(update: Update) -> str:
     message = update.effective_message
     if message is None:
@@ -40,7 +46,7 @@ def message_text(update: Update) -> str:
         return message.text.strip()
     if message.caption:
         return message.caption.strip()
-    return "[сообщение без текста]"
+    return NO_TEXT_MESSAGE
 
 
 def remember_user(db: Database, update: Update) -> None:
@@ -311,13 +317,7 @@ async def private_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         tg_message_id=message.message_id,
     )
 
-    match: MatchResult | None = None
-    if text != "[сообщение без текста]":
-        match = find_best_match(
-            text,
-            db.get_faq_items(),
-            threshold=settings.match_threshold,
-        )
+    match = await choose_faq_match(text, context)
 
     if match is not None:
         answer = str(match.item["answer"])
@@ -418,6 +418,59 @@ async def notify_coordinators(
         text=format_ticket_notification(ticket, first_text),
         reply_markup=ticket_keyboard(ticket),
         disable_web_page_preview=True,
+    )
+
+
+async def choose_faq_match(
+    text: str,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> MatchResult | None:
+    if text == NO_TEXT_MESSAGE:
+        return None
+
+    db = app_db(context)
+    settings = app_settings(context)
+    faq_items = db.get_faq_items()
+    local_match = find_best_match(
+        text,
+        faq_items,
+        threshold=settings.match_threshold,
+    )
+
+    gemini = app_gemini(context)
+    if local_match is not None and (
+        gemini is None or local_match.score >= settings.local_direct_match_threshold
+    ):
+        return local_match
+
+    if gemini is None:
+        return local_match
+
+    by_intent = {str(item.get("intent")): item for item in faq_items}
+    try:
+        classification = await gemini.classify(user_message=text, faq_items=faq_items)
+    except GeminiError as exc:
+        logger.warning("Gemini classification failed, using local fallback: %s", exc)
+        return local_match
+
+    logger.info(
+        "Gemini classification intent=%s confidence=%.3f reason=%s",
+        classification.intent,
+        classification.confidence,
+        classification.reason,
+    )
+
+    if (
+        not classification.is_match
+        or classification.confidence < settings.gemini_min_confidence
+        or classification.intent not in by_intent
+    ):
+        return None
+
+    return MatchResult(
+        item=by_intent[classification.intent],
+        score=classification.confidence,
+        reason=f"gemini:{classification.reason or 'classified'}",
     )
 
 
@@ -595,6 +648,14 @@ def build_application(settings: Settings, db: Database) -> Application:
     application = Application.builder().token(settings.bot_token).build()
     application.bot_data["settings"] = settings
     application.bot_data["db"] = db
+    if settings.gemini_enabled and settings.gemini_api_key:
+        application.bot_data["gemini"] = GeminiFAQClassifier(
+            api_key=settings.gemini_api_key,
+            model=settings.gemini_model,
+            timeout_seconds=settings.gemini_timeout_seconds,
+        )
+    else:
+        application.bot_data["gemini"] = None
 
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("help", help_cmd))
@@ -626,5 +687,7 @@ def main() -> None:
 
     if settings.coordinator_chat_id is None:
         logger.warning("COORDINATOR_CHAT_ID is not set. /chatid still works.")
+    if settings.gemini_enabled and not settings.gemini_api_key:
+        logger.warning("GEMINI_ENABLED is true, but GEMINI_API_KEY is not set.")
 
     build_application(settings, db).run_polling(allowed_updates=Update.ALL_TYPES)
