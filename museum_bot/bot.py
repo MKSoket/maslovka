@@ -18,6 +18,7 @@ from telegram.ext import (
 
 from .config import Settings
 from .db import Database
+from .escalation import is_human_handoff_request
 from .gemini import GeminiError, GeminiFAQClassifier
 from .matcher import MatchResult, find_best_match
 
@@ -305,7 +306,6 @@ async def private_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     db = app_db(context)
-    settings = app_settings(context)
     remember_user(db, update)
 
     text = message_text(update)
@@ -333,6 +333,30 @@ async def private_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.info("Ignored non-text private message user=%s db_message_id=%s", user.id, db_message_id)
         return
 
+    if is_human_handoff_request(text):
+        ticket_id = db.create_ticket(user.id, db_message_id)
+        db.attach_message_to_ticket(db_message_id, ticket_id)
+        logger.info("Human handoff requested user=%s ticket=%s", user.id, ticket_id)
+        await answer_with_ticket_status(
+            update,
+            context,
+            ticket_id=ticket_id,
+            user_reply=(
+                "Хорошо, передал ваш запрос координаторам музея. "
+                "Ответ придет здесь, в этом чате."
+            ),
+            no_group_reply=(
+                "Я понял, что вы хотите связаться с координатором, и сохранил запрос, "
+                "но группа координаторов пока не настроена."
+            ),
+            notify_failed_reply=(
+                "Я понял, что вы хотите связаться с координатором, и сохранил запрос, "
+                "но сейчас не смог отправить его в группу координаторов. "
+                "Пожалуйста, попробуйте позже или свяжитесь с музеем напрямую."
+            ),
+        )
+        return
+
     match = await choose_faq_match(text, context)
 
     if match is not None:
@@ -357,11 +381,48 @@ async def private_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     ticket_id = db.create_ticket(user.id, db_message_id)
     db.attach_message_to_ticket(db_message_id, ticket_id)
 
-    if settings.coordinator_chat_id is None:
-        reply = (
+    await answer_with_ticket_status(
+        update,
+        context,
+        ticket_id=ticket_id,
+        user_reply=(
+            "Спасибо, я передал вопрос координаторам музея. "
+            "Ответ придет здесь, в этом чате."
+        ),
+        no_group_reply=(
             "Я не нашел готовый ответ и сохранил вопрос, "
             "но группа координаторов пока не настроена."
-        )
+        ),
+        notify_failed_reply=(
+            "Я не нашел готовый ответ и сохранил вопрос, "
+            "но сейчас не смог отправить его координаторам. "
+            "Пожалуйста, попробуйте позже или свяжитесь с музеем напрямую."
+        ),
+    )
+    return
+
+
+async def answer_with_ticket_status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    ticket_id: int,
+    user_reply: str,
+    no_group_reply: str,
+    notify_failed_reply: str,
+) -> None:
+    message = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if message is None or user is None or chat is None:
+        return
+
+    db = app_db(context)
+    settings = app_settings(context)
+    text = message_text(update)
+
+    if settings.coordinator_chat_id is None:
+        reply = no_group_reply
         sent = await message.reply_text(reply)
         db.log_message(
             user_id=user.id,
@@ -382,17 +443,10 @@ async def private_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             source_chat_id=chat.id,
             source_message_id=message.message_id,
         )
-        reply = (
-            "Спасибо, я передал вопрос координаторам музея. "
-            "Ответ придет здесь, в этом чате."
-        )
+        reply = user_reply
     except TelegramError as exc:
         logger.exception("Could not notify coordinators for ticket %s: %s", ticket_id, exc)
-        reply = (
-            "Я не нашел готовый ответ и сохранил вопрос, "
-            "но сейчас не смог отправить его координаторам. "
-            "Пожалуйста, попробуйте позже или свяжитесь с музеем напрямую."
-        )
+        reply = notify_failed_reply
 
     sent = await message.reply_text(reply)
     db.log_message(

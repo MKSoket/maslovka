@@ -37,6 +37,7 @@ def compact_faq_items(faq_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "intent": str(item.get("intent") or item.get("id")),
             "question": str(item.get("question", "")),
             "keywords": [str(keyword) for keyword in item.get("keywords", [])],
+            "answer_preview": str(item.get("answer", ""))[:500],
         }
         for item in faq_items
     ]
@@ -50,7 +51,9 @@ def build_prompt(user_message: str, faq_items: list[dict[str, Any]]) -> str:
         "Нужно выбрать один intent из списка FAQ, если вопрос пользователя по смыслу совпадает "
         "с одним из готовых вопросов, даже если формулировка другая.\n\n"
         "Правила:\n"
+        "- Используй question, keywords и answer_preview: answer_preview помогает различать близкие темы.\n"
         "- Не придумывай новые ответы и не выбирай FAQ только по одному общему слову.\n"
+        "- Если пользователь просит перевести на координатора, оператора или живого человека, верни NO_MATCH.\n"
         "- Если подходящего FAQ нет, пользователь пишет не по теме музея или уверенность низкая, верни NO_MATCH.\n"
         "- confidence: число от 0 до 1.\n"
         "- reason: коротко на русском, почему выбран intent или почему NO_MATCH.\n\n"
@@ -171,4 +174,3 @@ class GeminiFAQClassifier:
         if not text:
             raise GeminiError("Gemini response has no text")
         return text
-

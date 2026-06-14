@@ -30,6 +30,18 @@ class MatcherTest(unittest.TestCase):
     def test_ticket_refund(self) -> None:
         self.assert_question("как оформить возврат билета?", "Как вернуть билет?")
 
+    def test_refund_worded_as_money_back(self) -> None:
+        self.assert_question("можно сдать билет и вернуть деньги?", "Как вернуть билет?")
+
+    def test_lost_ticket_email(self) -> None:
+        self.assert_question("после оплаты не пришло письмо с билетом", "Что делать, если не пришел билет на почту?")
+
+    def test_entrance_worded_differently(self) -> None:
+        self.assert_question("куда заходить, вход с улицы или со двора?", "Как попасть в музей?")
+
+    def test_accessibility_worded_differently(self) -> None:
+        self.assert_question("можно ли пройти с инвалидной коляской, есть ли лифт?", "Есть ли доступная среда?")
+
     def test_unknown_question(self) -> None:
         result = find_best_match("у вас есть кафе с завтраками?", self.items, threshold=0.57)
         self.assertIsNone(result)
@@ -37,4 +49,3 @@ class MatcherTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

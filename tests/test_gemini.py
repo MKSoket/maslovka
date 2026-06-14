@@ -23,7 +23,7 @@ class GeminiTest(unittest.TestCase):
         self.assertEqual(result.intent, NO_MATCH)
         self.assertFalse(result.is_match)
 
-    def test_prompt_contains_only_compact_faq(self) -> None:
+    def test_prompt_contains_compact_faq_with_answer_preview(self) -> None:
         prompt = build_prompt(
             "Когда вы работаете?",
             [
@@ -38,7 +38,8 @@ class GeminiTest(unittest.TestCase):
 
         self.assertIn("faq_001", prompt)
         self.assertIn("Как работает музей?", prompt)
-        self.assertNotIn("Не нужно отправлять ответ", prompt)
+        self.assertIn("answer_preview", prompt)
+        self.assertIn("Не нужно отправлять ответ", prompt)
 
 
 if __name__ == "__main__":
